@@ -5,10 +5,7 @@ import logging
 import os
 import json
 
-
 from botocore.exceptions import ClientError
-
-IDENTITY_CENTER_ARN=os.environ["IDENTITY_CENTER_ARN"]
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -58,7 +55,7 @@ def get_permission_sets(sso_client: botocore.client,
   permission_sets = {}
   for arn in permission_set_arns:
     response = sso_client.describe_permission_set(
-      InstanceArn       = IDENTITY_CENTER_ARN,
+      InstanceArn       = identity_center_arn,
       PermissionSetArn  = arn
     )
     permission_sets[response['PermissionSet']['Name']] = response['PermissionSet']
@@ -93,6 +90,7 @@ def create_permission_set(sso_client: botocore.client,
 
 # update permission set policies to match what is passed in
 def manage_permission_set_policies(sso_client: botocore.client,
+                                   identity_center_arn: str,
                                    permission_set_arn: str,
                                    policies: []):
   
@@ -101,12 +99,12 @@ def manage_permission_set_policies(sso_client: botocore.client,
   current_managed_policies = []
   current_customer_policies = []
 
-  response = sso_client.list_customer_managed_policy_references_in_permission_set(InstanceArn   = IDENTITY_CENTER_ARN,
+  response = sso_client.list_customer_managed_policy_references_in_permission_set(InstanceArn   = identity_center_arn,
                                                                        MaxResults = 100,
                                                                        PermissionSetArn = permission_set_arn)
   current_customer_policies = response['CustomerManagedPolicyReferences']
   
-  response = sso_client.list_managed_policies_in_permission_set(InstanceArn   = IDENTITY_CENTER_ARN,
+  response = sso_client.list_managed_policies_in_permission_set(InstanceArn   = identity_center_arn,
                                                                 MaxResults = 100,
                                                                 PermissionSetArn = permission_set_arn)
   
@@ -127,7 +125,7 @@ def manage_permission_set_policies(sso_client: botocore.client,
   to_delete = current_managed_policy_set.difference(new_managed_policies)
   logger.info(f"Managed policies to remove: {to_delete}")
   for policy in to_delete:
-    response = sso_client.detach_managed_policy_from_permission_set(InstanceArn       = IDENTITY_CENTER_ARN, 
+    response = sso_client.detach_managed_policy_from_permission_set(InstanceArn       = identity_center_arn, 
                                                                     ManagedPolicyArn  = policy,
                                                                     PermissionSetArn  = permission_set_arn)
 
@@ -137,7 +135,7 @@ def manage_permission_set_policies(sso_client: botocore.client,
   logger.info(f"Managed policies to add: {to_add}")
 
   for policy in to_add:
-    response = sso_client.attach_managed_policy_to_permission_set(InstanceArn       = IDENTITY_CENTER_ARN, 
+    response = sso_client.attach_managed_policy_to_permission_set(InstanceArn       = identity_center_arn, 
                                                                   ManagedPolicyArn  = policy,
                                                                   PermissionSetArn  = permission_set_arn)
 
@@ -176,11 +174,65 @@ def process_definition(definition):
 
   # apply permission set, group to accounts
 
+def manage_permissions(sso_client:botocore.client,
+                       identity_center_arn: str,
+                       job_definitions: {}):
+  # Get existing list of permission sets to check against
+  permission_sets = get_permission_sets(sso_client= sso_client,
+                                        identity_center_arn=identity_center_arn)
+  
+  for job_name, job_definition in job_definitions.items():  
+    if job_name not in permission_sets:
+      # Create permission set for the job
+      permission_set = create_permission_set(sso_client=sso_client,
+                            identity_center_arn=identity_center_arn,
+                            name=job_name)
+      permission_sets[job_name] = permission_set
+      
+    else:
+      logger.info(f"Permission set exists: {job_name}")
 
+    manage_permission_set_policies(sso_client=sso_client,
+                                  identity_center_arn=identity_center_arn,
+                                  permission_set_arn=permission_sets[job_name]['PermissionSetArn'],
+                                  policies=job_definition['policies'])
+    
+def manage_groups(is_client: botocore.client,
+                  identity_store_id: str,
+                  job_definitions: {}):
+
+  groups = []
+  
+  # Get list of existing groups
+  response = is_client.list_groups(IdentityStoreId=identity_store_id,
+                                   MaxResults = 100)
+  
+  groups.extend(response['Groups'])
+  next_token = response.setdefault('NextToken','')
+
+  while next_token != '':
+    response = is_client.list_groups(IdentityStoreId=identity_store_id,
+                                    MaxResults = 100)
+    groups.extend(response['Groups'])
+    next_token = response.setdefault('NextToken','')
+
+  logger.debug(groups)
+
+  # Get list of groups from job defs
+
+  # Get difference between the two sets
+
+  # Create as necessary
+
+  # Delete as necessary
 
 if __name__ == "__main__":
 
-  # TODO: iterate over files in the job_definitions directory
+  identity_center_arn = os.environ["IDENTITY_CENTER_ARN"]
+  identity_store_id = os.environ["IDENTITY_STORE_ID"]
+
+
+  # Parse out job definitions
   job_dir = 'job_definitions'
   job_files = os.listdir(job_dir)
 
@@ -192,25 +244,18 @@ if __name__ == "__main__":
     job_name = file.split(sep='.')[0]
     job_definitions[job_name] = parse_yaml(f"{job_dir}/{file}")
 
-  sso_client = boto3.client("sso-admin")
-
-  # Get existing list of permission sets to check against
-  permission_sets = get_permission_sets(sso_client= sso_client,
-                                        identity_center_arn=IDENTITY_CENTER_ARN)
+  # Manage the permissions and policies
+  # sso_client = boto3.client("sso-admin")
+  # manage_permissions(sso_client=sso_client,
+  #                    identity_center_arn=identity_center_arn,
+  #                    job_definitions=job_definitions)
   
-  for job_name, job_definition in job_definitions.items():  
-    if job_name not in permission_sets:
-      # Create permission set for the job
-      permission_set = create_permission_set(sso_client=sso_client,
-                            identity_center_arn=IDENTITY_CENTER_ARN,
-                            name=job_name)
-      permission_sets[job_name] = permission_set
-      
-    else:
-      logger.info(f"Permission set exists: {job_name}")
+  # Create/update/delete customer managed policies in accounts
+  #manage_policies()
 
-    manage_permission_set_policies(sso_client=sso_client,
-                                  permission_set_arn=permission_sets[job_name]['PermissionSetArn'],
-                                  policies=job_definition['policies'])
-
+  # Create/update/delete groups
+  is_client = boto3.client('identitystore')
+  manage_groups(is_client=is_client,
+                identity_store_id=identity_store_id,
+                job_definitions=job_definitions)
   
