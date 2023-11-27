@@ -11,6 +11,8 @@ import botocore
 
 from botocore.exceptions import ClientError
 
+import apm.jobs
+
 NAME_PREFIX = "APM-"  # AWS permission manager
 
 logger = logging.getLogger(__name__)
@@ -22,13 +24,13 @@ sh.setFormatter(formatter)
 logger.addHandler(sh)
 
 
-def parse_yaml(filename: str):
-    """Read yaml file so we get a dict that can be worked with"""
+# def parse_yaml(filename: str):
+#     """Read yaml file so we get a dict that can be worked with"""
 
-    output = {}
-    with open(filename, encoding="UTF-8") as job_file:
-        output = yaml.safe_load(job_file)
-    return output
+#     output = {}
+#     with open(filename, encoding="UTF-8") as job_file:
+#         output = yaml.safe_load(job_file)
+#     return output
 
 
 def get_permission_sets(sso_client: botocore.client, identity_center_arn: str):
@@ -322,22 +324,28 @@ def manage_groups(
     logger.info("Completed group management")
 
 
-def main():
+def start():
     """Kick things off"""
     identity_center_arn = os.environ["IDENTITY_CENTER_ARN"]
     identity_store_id = os.environ["IDENTITY_STORE_ID"]
 
     # Parse out job definitions
-    job_dir = "job_definitions"
-    job_files = os.listdir(job_dir)
+    job_path = "job_definitions"
+    job_definitions = apm.jobs.get_jobs(job_path, NAME_PREFIX)
 
-    logger.debug("Job files found: %s", job_files)
+    if len(job_definitions.keys()) == 0:
+        logger.error("No job definitions loaded from path: %s", job_path)
 
-    job_definitions = {}
+    # job_dir = "job_definitions"
+    # job_files = os.listdir(job_dir)
 
-    for file in job_files:
-        job_name = NAME_PREFIX + file.split(sep=".")[0]
-        job_definitions[job_name] = parse_yaml(f"{job_dir}/{file}")
+    # logger.debug("Job files found: %s", job_files)
+
+    # job_definitions = {}
+
+    # for file in job_files:
+    #     job_name = NAME_PREFIX + file.split(sep=".")[0]
+    #     job_definitions[job_name] = parse_yaml(f"{job_dir}/{file}")
 
     # Manage the permissions and policies
     sso_client = boto3.client("sso-admin")
@@ -361,4 +369,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    start()
