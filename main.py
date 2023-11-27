@@ -279,6 +279,12 @@ def create_group(is_client: botocore.client, identity_store_id: str, group_name:
     return result
 
 
+def delete_group(is_client: botocore.client, identity_store_id: str, group_id: str):
+    """Delete a group given the id"""
+    logger.info("Deleting group: %s", group_id)
+    is_client.delete_group(IdentityStoreId=identity_store_id, GroupId=group_id)
+
+
 def manage_groups(
     is_client: botocore.client, identity_store_id: str, job_definitions: {}
 ):
@@ -287,6 +293,7 @@ def manage_groups(
 
     groups = get_groups(is_client=is_client, identity_store_id=identity_store_id)
 
+    # Create as necessary
     for job_name, job_definition in job_definitions.items():
         if job_name not in groups:
             logger.debug("Group not found: %s", job_name)
@@ -296,11 +303,21 @@ def manage_groups(
                 group_name=job_name,
             )
 
-    # Get difference between the two sets
-
-    # Create as necessary
-
     # Delete as necessary
+    for group in groups:
+        if NAME_PREFIX not in group:
+            logger.info("Group not managed by permissions manager: %s", group)
+            continue
+
+        if group not in job_definitions:
+            logger.info(
+                "Group not found in current jobs, marked for deletion: %s", group
+            )
+            delete_group(
+                is_client=is_client,
+                identity_store_id=identity_store_id,
+                group_id=groups[group]["GroupId"],
+            )
 
     logger.info("Completed group management")
 
