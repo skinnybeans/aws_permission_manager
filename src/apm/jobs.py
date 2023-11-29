@@ -8,12 +8,12 @@ import yaml
 import os
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
-sh = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-sh.setFormatter(formatter)
-logger.addHandler(sh)
+# sh = logging.StreamHandler()
+# formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# sh.setFormatter(formatter)
+# logger.addHandler(sh)
 
 
 def parse_yaml(filename: str):

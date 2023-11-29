@@ -2,6 +2,7 @@
 """
 
 import logging
+import logging.config
 import os
 import json
 
@@ -16,21 +17,12 @@ import apm.jobs
 NAME_PREFIX = "APM-"  # AWS permission manager
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
-sh = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-sh.setFormatter(formatter)
-logger.addHandler(sh)
-
-
-# def parse_yaml(filename: str):
-#     """Read yaml file so we get a dict that can be worked with"""
-
-#     output = {}
-#     with open(filename, encoding="UTF-8") as job_file:
-#         output = yaml.safe_load(job_file)
-#     return output
+# sh = logging.StreamHandler()
+# formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# sh.setFormatter(formatter)
+# logger.addHandler(sh)
 
 
 def get_permission_sets(sso_client: botocore.client, identity_center_arn: str):
@@ -64,7 +56,8 @@ def get_permission_sets(sso_client: botocore.client, identity_center_arn: str):
         permission_sets[response["PermissionSet"]["Name"]] = response["PermissionSet"]
 
     logger.debug(
-        "Permission set details: %s", json.dumps(permission_sets, indent=2, default=str)
+        "Returning permission sets: %s",
+        json.dumps(permission_sets, indent=2, default=str),
     )
 
     return permission_sets
@@ -324,8 +317,67 @@ def manage_groups(
     logger.info("Completed group management")
 
 
+def assign_account(
+    sso_client: botocore.client,
+    identity_center_arn: str,
+    permission_set_arn: str,
+    group_id: str,
+    account_id: str,
+):
+    """AWS call to do the permission and group assignment to an account"""
+    response = sso_client.create_account_assignment(
+        InstanceArn=identity_center_arn,
+        PermissionSetArn=permission_set_arn,
+        PrincipalId=group_id,
+        PrincipalType="GROUP",
+        TargetId=account_id,
+        TargetType="AWS_ACCOUNT",
+    )
+    logger.info(
+        "Assign account response: %s", response["AccountAssignmentCreationStatus"]
+    )
+
+
+def apply_permissions(
+    sso_client: botocore.client,
+    is_client: botocore.client,
+    identity_center_arn: str,
+    identity_store_id: str,
+    job_definitions: {},
+):
+    """Apply the permission sets and groups to accounts"""
+    logger.info("Applying permission sets and groups to accounts")
+
+    permission_sets = get_permission_sets(
+        sso_client=sso_client, identity_center_arn=identity_center_arn
+    )
+    groups = get_groups(is_client=is_client, identity_store_id=identity_store_id)
+
+    for job, details in job_definitions.items():
+        logger.info("Processing job function %s", job)
+        for account in details["scope"]["accounts"]:
+            logging.info(
+                "Assigning account: %s group: %s permission_set: %s",
+                account,
+                groups[job]["GroupId"],
+                permission_sets[job]["PermissionSetArn"],
+            )
+            assign_account(
+                sso_client=sso_client,
+                identity_center_arn=identity_center_arn,
+                permission_set_arn=permission_sets[job]["PermissionSetArn"],
+                group_id=groups[job]["GroupId"],
+                account_id=account,
+            )
+
+
 def start():
     """Kick things off"""
+
+    f = open("config/logging.yaml")
+    logging_config = yaml.safe_load(f.read())
+    logging.config.dictConfig(logging_config)
+
     identity_center_arn = os.environ["IDENTITY_CENTER_ARN"]
     identity_store_id = os.environ["IDENTITY_STORE_ID"]
 
@@ -335,17 +387,6 @@ def start():
 
     if len(job_definitions.keys()) == 0:
         logger.error("No job definitions loaded from path: %s", job_path)
-
-    # job_dir = "job_definitions"
-    # job_files = os.listdir(job_dir)
-
-    # logger.debug("Job files found: %s", job_files)
-
-    # job_definitions = {}
-
-    # for file in job_files:
-    #     job_name = NAME_PREFIX + file.split(sep=".")[0]
-    #     job_definitions[job_name] = parse_yaml(f"{job_dir}/{file}")
 
     # Manage the permissions and policies
     sso_client = boto3.client("sso-admin")
@@ -363,6 +404,14 @@ def start():
     is_client = boto3.client("identitystore")
     manage_groups(
         is_client=is_client,
+        identity_store_id=identity_store_id,
+        job_definitions=job_definitions,
+    )
+
+    apply_permissions(
+        sso_client=sso_client,
+        is_client=is_client,
+        identity_center_arn=identity_center_arn,
         identity_store_id=identity_store_id,
         job_definitions=job_definitions,
     )

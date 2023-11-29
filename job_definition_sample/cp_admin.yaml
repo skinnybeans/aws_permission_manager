@@ -1,0 +1,9 @@
+version: 1
+desc: >
+  Access for cloud platform members
+scope:
+  accounts:
+    - "012345678912"
+policies:
+  - arn:aws:iam::aws:policy/ReadOnlyAccess
+  - arn:aws:iam::aws:policy/AdministratorAccess
